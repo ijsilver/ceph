@@ -290,6 +290,10 @@ public:
   bool has_been_invalidated() const final {
     return parent->has_been_invalidated();
   }
+
+  void set_paddr(paddr_t& p) {
+    paddr = p;
+  }
 };
 
 }

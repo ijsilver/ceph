@@ -537,6 +537,9 @@ public:
     return segment_cleaner->stat();
   }
 
+  submit_transaction_direct_ret submit_transaction_hybrid(TransactionRef t);
+  submit_transaction_direct_ret submit_transaction_journal(TransactionRef t);
+
   ~TransactionManager();
 
 private:
@@ -547,6 +550,7 @@ private:
   CacheRef cache;
   LBAManagerRef lba_manager;
   JournalRef journal;
+  RandomBlockManagerRef rbm_manager;
 
   WritePipeline write_pipeline;
 
@@ -561,6 +565,13 @@ private:
   seastar::metrics::metric_group metrics;
   void register_metrics();
 
+  enum class transaction_write_mode {
+    JOURNAL = 0,
+    HYBRID = 1
+  };
+
+  // write mode
+  transaction_write_mode mode;
 public:
   // Testing interfaces
   auto get_segment_cleaner() {

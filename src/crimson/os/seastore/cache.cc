@@ -253,6 +253,14 @@ std::optional<record_t> Cache::try_construct_record(Transaction &t)
 
     assert(i->get_version() > 0);
     auto final_crc = i->get_crc32c();
+    store_types_t s_type = store_types_t::JOURNAL;
+    if (i->is_rb()) {
+      if (i->is_rb_small()) {
+	s_type = store_types_t::CBJOURNAL;
+      } else {
+	s_type = store_types_t::RBM;
+      }
+    }
     if (i->get_type() == extent_types_t::ROOT) {
       root = t.root;
       DEBUGT("writing out root delta for {}", t, *t.root);
@@ -265,7 +273,8 @@ std::optional<record_t> Cache::try_construct_record(Transaction &t)
 	  0,
 	  0,
 	  t.root->get_version() - 1,
-	  t.root->get_delta()
+	  t.root->get_delta(),
+	  s_type
 	});
     } else {
       record.deltas.push_back(
@@ -279,7 +288,8 @@ std::optional<record_t> Cache::try_construct_record(Transaction &t)
 	  final_crc,
 	  (segment_off_t)i->get_length(),
 	  i->get_version() - 1,
-	  i->get_delta()
+	  i->get_delta(),
+	  s_type
 	});
       i->last_committed_crc = final_crc;
     }
@@ -319,13 +329,44 @@ std::optional<record_t> Cache::try_construct_record(Transaction &t)
     }
 
     assert(bl.length() == i->get_length());
-    record.extents.push_back(extent_t{
-	i->get_type(),
-	i->is_logical()
-	? i->cast<LogicalCachedExtent>()->get_laddr()
-	: L_ADDR_NULL,
-	std::move(bl)
-      });
+    store_types_t s_type = store_types_t::JOURNAL;
+    if (i->is_rb()) {
+      if (i->is_rb_small()) {
+	s_type = store_types_t::CBJOURNAL;
+      } else {
+	s_type = store_types_t::RBM;
+      }
+    }
+    if (!i->is_rb()) {
+      record.extents.push_back(extent_t{
+	  i->get_type(),
+	  i->is_logical()
+	  ? i->cast<LogicalCachedExtent>()->get_laddr()
+	  : L_ADDR_NULL,
+	  std::move(bl),
+	  paddr_t(),
+	  s_type
+	});
+    } else if (i->is_rb()) {
+      record.extents.push_back(extent_t{
+	  i->get_type(),
+	  i->is_logical()
+	  ? i->cast<LogicalCachedExtent>()->get_laddr()
+	  : L_ADDR_NULL,
+	  std::move(bl),
+	  i->get_paddr(),
+	  s_type
+	});
+    }
+  }
+
+  for (auto b : t.allocated_blocks) {
+    bufferlist bl;
+    encode(b.alloc_blk_ids, bl);
+    delta_info_t delta;
+    delta.type = extent_types_t::RBM_ALLOC_INFO;
+    delta.bl = bl;
+    record.deltas.push_back(delta);
   }
 
   return std::make_optional<record_t>(std::move(record));
@@ -341,7 +382,11 @@ void Cache::complete_commit(
   DEBUGT("enter", t);
 
   for (auto &i: t.fresh_block_list) {
-    i->set_paddr(final_block_start.add_relative(i->get_paddr()));
+    if (!i->is_rb()) {
+      i->set_paddr(final_block_start.add_relative(i->get_paddr()));
+    } else {
+      i->set_paddr(i->get_paddr());
+    }
     i->last_committed_crc = i->get_crc32c();
     i->on_initial_write();
 
@@ -349,7 +394,6 @@ void Cache::complete_commit(
       DEBUGT("invalid {}", t, *i);
       continue;
     }
-
     i->state = CachedExtent::extent_state_t::CLEAN;
     DEBUGT("fresh {}", t, *i);
     add_extent(i);

@@ -360,11 +360,19 @@ inline bool is_logical_type(extent_types_t type) {
 
 std::ostream &operator<<(std::ostream &out, extent_types_t t);
 
+enum class store_types_t : uint8_t {
+  JOURNAL = 0,
+  CBJOURNAL = 1,
+  RBM = 2
+};
+
 /* description of a new physical extent */
 struct extent_t {
   extent_types_t type;  ///< type of extent
   laddr_t addr;         ///< laddr of extent (L_ADDR_NULL for non-logical)
   ceph::bufferlist bl;  ///< payload, bl.length() == length, aligned
+  paddr_t paddr;
+  store_types_t s_type = store_types_t::JOURNAL;
 };
 
 using extent_version_t = uint32_t;
@@ -380,6 +388,7 @@ struct delta_info_t {
   segment_off_t length = NULL_SEG_OFF;         ///< extent length
   extent_version_t pversion;                   ///< prior version
   ceph::bufferlist bl;                         ///< payload
+  store_types_t s_type = store_types_t::JOURNAL;
 
   DENC(delta_info_t, v, p) {
     DENC_START(1, 1, p);
@@ -710,6 +719,8 @@ struct rbm_alloc_delta_t {
   interval_set<blk_id_t> alloc_blk_ids;
   op_types_t op;
 };
+
+constexpr uint32_t rbm_min_write = 8192;
 
 }
 

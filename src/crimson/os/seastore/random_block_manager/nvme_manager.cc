@@ -239,7 +239,7 @@ NVMeManager::find_block_ret NVMeManager::find_free_block(Transaction &t, size_t 
 }
 
 /* TODO : block allocator */
-NVMeManager::allocate_ertr::future<> NVMeManager::alloc_extent(
+NVMeManager::allocate_ret NVMeManager::alloc_extent(
     Transaction &t, size_t size)
 {
 
@@ -253,8 +253,8 @@ NVMeManager::allocate_ertr::future<> NVMeManager::alloc_extent(
    *
    */
   return find_free_block(t, size
-      ).safe_then([] (auto alloc_extent) mutable
-	-> allocate_ertr::future<> {
+      ).safe_then([&t, this] (auto alloc_extent) mutable
+	-> allocate_ret {
 	logger().debug("after find_free_block: allocated {}", alloc_extent);
 	if (!alloc_extent.empty()) {
 	  rbm_alloc_delta_t alloc_info {
@@ -262,11 +262,14 @@ NVMeManager::allocate_ertr::future<> NVMeManager::alloc_extent(
 	    alloc_extent,
 	    rbm_alloc_delta_t::op_types_t::SET
 	  };
-	  // TODO: add alloc info to delta
+	  t.add_rbm_allocated_blocks(alloc_info);
 	} else {
 	  return crimson::ct_error::enospc::make();
 	}
-	return allocate_ertr::now();
+	//return alloc_extent.range_start() * super.block_size;
+	return allocate_ret(
+	  allocate_ertr::ready_future_marker{},
+	  alloc_extent.range_start() * super.block_size);
 	}
       ).handle_error(
 	allocate_ertr::pass_further{},
@@ -629,6 +632,38 @@ NVMeManager::check_bitmap_blocks_ertr::future<> NVMeManager::check_bitmap_blocks
       }
     );
   });
+}
+
+NVMeManager::submit_record_ertr::future<> NVMeManager::submit_record(
+  record_t &record,
+  OrderingHandle &handle) 
+{
+  // large writes must be extent, not delta
+  std::vector<std::pair<blk_paddr_t, bufferlist>> to_write;
+  for (const auto &i: record.extents) {
+    if (i.s_type == store_types_t::RBM) {
+      to_write.push_back(std::make_pair(i.paddr.segment * super.block_size 
+			  + i.paddr.offset, i.bl));
+    }
+  }
+  for (const auto &i: record.deltas) {
+    if (i.s_type == store_types_t::RBM) {
+      to_write.push_back(std::make_pair(i.paddr.segment * super.block_size 
+			  + i.paddr.offset, i.bl));
+    }
+  }
+  return crimson::do_for_each(to_write,
+    [&, this] (auto &item) {
+      return write(item.first, item.second);
+    }
+  ).safe_then([]() {
+    return submit_record_ertr::now();
+  }).handle_error(
+    submit_record_ertr::pass_further{},
+    crimson::ct_error::assert_all{
+      "Invalid error in NVMeManager::submit_record"
+    }
+  );
 }
 
 NVMeManager::write_ertr::future<> NVMeManager::write(

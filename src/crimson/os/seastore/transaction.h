@@ -80,8 +80,26 @@ public:
   void add_fresh_extent(CachedExtentRef ref) {
     ceph_assert(!is_weak());
     fresh_block_list.push_back(ref);
-    ref->set_paddr(make_record_relative_paddr(offset));
-    offset += ref->get_length();
+    if (!ref->is_rb()) {
+      ref->set_paddr(make_record_relative_paddr(offset));
+      offset += ref->get_length();
+    } else {
+      /**
+       * We take account into two cases here : 1) small writes, 2) large writes.
+       * In smal writes, data will be appended to CircularBoundedJournal first,
+       * so paddr should be the address within the CurcularBoundedJournal.
+       * On the other hands, in large writes, the address we should set here is 
+       * within RandomBlockManager.
+       */
+      if (ref->get_length() < rbm_min_write) {
+	// set addr from CircularBoundedJournal
+	ref->set_paddr(paddr_t{NULL_SEG_ID, offset});
+	offset += ref->get_length();
+      } else {
+	// In large writes, the paddr_t is already set.
+	ref->set_paddr(ref->cast<LogicalCachedExtent>()->get_rbm_addr());
+      }
+    } 
     write_set.insert(*ref);
   }
 
@@ -116,6 +134,18 @@ public:
     return weak;
   }
 
+  void add_rbm_allocated_blocks(rbm_alloc_delta_t &d) {
+    allocated_blocks.push_back(d);
+  }
+  void clear_rbm_allocated_blocks() {
+    if (!allocated_blocks.empty()) {
+      allocated_blocks.clear();
+    }
+  }
+  const auto &get_rbm_allocated_blocks() {
+    return allocated_blocks;
+  }
+
 private:
   friend class Cache;
   friend Ref make_test_transaction();
@@ -146,6 +176,8 @@ private:
   journal_seq_t initiated_after;
 
   retired_extent_gate_t::token_t retired_gate_token;
+
+  std::vector<rbm_alloc_delta_t> allocated_blocks;
 
 public:
   Transaction(
