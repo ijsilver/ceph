@@ -1,5 +1,5 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
-// vim: ts=8 sw=2 smarttab
+// vim: ts=8 sw=2 eaarttab
 
 #pragma once
 
@@ -34,7 +34,7 @@ class SeaStore final : public FuturizedStore {
 public:
 
   SeaStore(
-    SegmentManagerRef sm,
+    ExtentAllocatorRef ea,
     TransactionManagerRef tm,
     CollectionManagerRef cm,
     OnodeManagerRef om);
@@ -226,7 +226,7 @@ private:
     const std::optional<string> &_start,
     OMapManager::omap_list_config_t config);
 
-  SegmentManagerRef segment_manager;
+  ExtentAllocatorRef extent_allocator;
   TransactionManagerRef transaction_manager;
   CollectionManagerRef collection_manager;
   OnodeManagerRef onode_manager;
